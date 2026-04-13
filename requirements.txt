@@ -1,0 +1,18 @@
+# Voice Agent — Python Dependencies
+
+# Web UI
+gradio>=4.44.0
+
+# Speech-to-Text (Groq Whisper API)
+groq>=0.11.0
+
+# LLM for Intent Understanding + Code Generation (Groq Llama)
+# Same groq package handles both STT and LLM
+
+# Optional: Local Whisper fallback (requires GPU for good performance)
+# torch>=2.0.0
+# transformers>=4.40.0
+
+# Audio processing utilities (usually bundled with gradio)
+soundfile>=0.12.1
+numpy>=1.24.0

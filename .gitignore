@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+env/
+.venv/
+.env
+
+# API Keys — NEVER commit these
+.env
+.env.local
+secrets.py
+
+# Output folder contents (keep folder, ignore files)
+output/*
+!output/.gitkeep
+
+# Gradio temp files
+gradio_tmp/
+flagged/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
