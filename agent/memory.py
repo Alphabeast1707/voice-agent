@@ -198,7 +198,7 @@ class Mem0Memory:
             return []
 
         try:
-            results = self._client.search(query, user_id=self.user_id)
+            results = self._client.search(query, filters={"user_id": self.user_id})
             memories = []
             # Handle both list and dict response formats
             items = results if isinstance(results, list) else results.get("results", [])
@@ -220,7 +220,7 @@ class Mem0Memory:
             return []
 
         try:
-            results = self._client.get_all(user_id=self.user_id)
+            results = self._client.get_all(filters={"user_id": self.user_id})
             items = results if isinstance(results, list) else results.get("results", [])
             return items
         except Exception as e:
@@ -250,7 +250,7 @@ class Mem0Memory:
                 if self._init_error:
                     return f"⚠️ {self._init_error}"
                 return "🔑 Enter your Mem0 API key to enable persistent memory."
-            return "🧠 No memories stored yet. Start talking to build memory!"
+            return "🧠 No memories stored yet. Start talking to build memory!\n\n💡 *Tip: Memories are processed asynchronously (5-10s delay). Click **Refresh Memories** after using voice commands.*"
 
         lines = [f"🧠 **{len(all_mems)} Memories Stored**\n"]
         for item in all_mems[:30]:
@@ -267,7 +267,7 @@ class Mem0Memory:
         if not self.is_available:
             return False
         try:
-            self._client.delete_all(user_id=self.user_id)
+            self._client.delete_all(filters={"user_id": self.user_id})
             return True
         except Exception as e:
             print(f"[mem0] delete_all error: {e}")
