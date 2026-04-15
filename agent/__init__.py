@@ -3,7 +3,7 @@
 from .stt import transcribe_audio
 from .intent import classify_intent, get_intent_display_name
 from .tools import execute_all_commands
-from .memory import SessionMemory
+from .memory import SessionMemory, Mem0Memory
 
 __all__ = [
     "transcribe_audio",
@@ -11,4 +11,5 @@ __all__ = [
     "get_intent_display_name",
     "execute_all_commands",
     "SessionMemory",
+    "Mem0Memory",
 ]

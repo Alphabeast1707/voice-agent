@@ -9,6 +9,9 @@ groq>=0.11.0
 # LLM for Intent Understanding + Code Generation (Groq Llama)
 # Same groq package handles both STT and LLM
 
+# Persistent Memory (mem0 platform)
+mem0ai>=0.1.0
+
 # Optional: Local Whisper fallback (requires GPU for good performance)
 # torch>=2.0.0
 # transformers>=4.40.0

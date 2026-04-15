@@ -2,6 +2,7 @@
 Tool Execution module.
 Handles: file creation, code generation, text summarization, file listing, reading.
 All LLM tasks use Groq API (Llama 3.3 70B).
+Mem0 context is injected into LLM prompts when available.
 
 SAFETY: All file operations are restricted to the output/ directory.
 """
@@ -57,9 +58,15 @@ def _llm_generate(client, prompt: str, system: str = "", temperature: float = 0.
     return response.choices[0].message.content.strip()
 
 
-def execute_command(command: dict, intent_data: dict, groq_api_key: str, confirmed: bool = True) -> dict:
+def execute_command(command: dict, intent_data: dict, groq_api_key: str, mem0_context: str = "") -> dict:
     """
     Execute a single command based on its type.
+    
+    Args:
+        command: The command dict with 'type' and 'params'
+        intent_data: Full intent classification data
+        groq_api_key: Groq API key
+        mem0_context: Relevant context from mem0 memories
     
     Returns:
         dict with 'status', 'action', 'output', 'filepath' (optional)
@@ -71,17 +78,17 @@ def execute_command(command: dict, intent_data: dict, groq_api_key: str, confirm
     all_params = {**intent_data.get("parameters", {}), **params}
 
     if cmd_type == "write_code":
-        return execute_write_code(all_params, intent_data.get("raw_request", ""), groq_api_key)
+        return execute_write_code(all_params, intent_data.get("raw_request", ""), groq_api_key, mem0_context)
     elif cmd_type == "create_file":
         return execute_create_file(all_params)
     elif cmd_type == "summarize_text":
-        return execute_summarize(all_params, intent_data.get("raw_request", ""), groq_api_key)
+        return execute_summarize(all_params, intent_data.get("raw_request", ""), groq_api_key, mem0_context)
     elif cmd_type == "list_files":
         return execute_list_files()
     elif cmd_type == "read_file":
         return execute_read_file(all_params)
     elif cmd_type == "general_chat":
-        return execute_chat(all_params, intent_data.get("raw_request", ""), groq_api_key)
+        return execute_chat(all_params, intent_data.get("raw_request", ""), groq_api_key, mem0_context)
     elif cmd_type == "delete_file":
         return {
             "status": "skipped",
@@ -96,7 +103,7 @@ def execute_command(command: dict, intent_data: dict, groq_api_key: str, confirm
         }
 
 
-def execute_write_code(params: dict, raw_request: str, groq_api_key: str) -> dict:
+def execute_write_code(params: dict, raw_request: str, groq_api_key: str, mem0_context: str = "") -> dict:
     """Generate code using Groq LLM and save to file."""
     language = params.get("language", "python")
     description = params.get("description", raw_request)
@@ -126,10 +133,15 @@ def execute_write_code(params: dict, raw_request: str, groq_api_key: str) -> dic
     try:
         client = _get_groq_client(groq_api_key)
 
+        # Inject mem0 context if available
+        context_block = ""
+        if mem0_context:
+            context_block = f"\n{mem0_context}\nUse the above context about the user's preferences to inform your code style and decisions.\n"
+
         code_prompt = f"""Generate clean, well-commented {language} code for the following:
 
 {description}
-
+{context_block}
 Requirements:
 - Write production-quality code with proper error handling
 - Include docstrings/comments explaining the code
@@ -213,7 +225,7 @@ def execute_create_file(params: dict) -> dict:
         }
 
 
-def execute_summarize(params: dict, raw_request: str, groq_api_key: str) -> dict:
+def execute_summarize(params: dict, raw_request: str, groq_api_key: str, mem0_context: str = "") -> dict:
     """Summarize text using Groq LLM."""
     content = params.get("content", "")
     filename = params.get("filename", "")
@@ -238,6 +250,10 @@ def execute_summarize(params: dict, raw_request: str, groq_api_key: str) -> dict
     try:
         client = _get_groq_client(groq_api_key)
 
+        context_block = ""
+        if mem0_context:
+            context_block = f"\n{mem0_context}\nAdapt the summary style based on the user's known preferences.\n"
+
         summary = _llm_generate(
             client,
             f"""Please provide a clear, concise summary of the following text.
@@ -245,7 +261,7 @@ Structure your summary with:
 1. A one-sentence TL;DR
 2. Key points (3-5 bullet points)
 3. Main takeaway
-
+{context_block}
 Text to summarize:
 {content}""",
             temperature=0.3,
@@ -339,8 +355,8 @@ def execute_read_file(params: dict) -> dict:
         }
 
 
-def execute_chat(params: dict, raw_request: str, groq_api_key: str) -> dict:
-    """Handle general chat with Groq LLM."""
+def execute_chat(params: dict, raw_request: str, groq_api_key: str, mem0_context: str = "") -> dict:
+    """Handle general chat with Groq LLM, enriched with mem0 context."""
     message = params.get("message", raw_request)
 
     if not message.strip():
@@ -359,10 +375,15 @@ def execute_chat(params: dict, raw_request: str, groq_api_key: str) -> dict:
 
     try:
         client = _get_groq_client(groq_api_key)
+
+        system_prompt = "You are a helpful voice-controlled AI agent. Be concise, friendly, and helpful. The user is interacting via voice, so keep responses conversational and clear."
+        if mem0_context:
+            system_prompt += f"\n\n{mem0_context}"
+
         reply = _llm_generate(
             client,
             message,
-            system="You are a helpful voice-controlled AI agent. Be concise, friendly, and helpful. The user is interacting via voice, so keep responses conversational and clear.",
+            system=system_prompt,
             temperature=0.7,
             max_tokens=1000,
         )
@@ -379,7 +400,7 @@ def execute_chat(params: dict, raw_request: str, groq_api_key: str) -> dict:
         }
 
 
-def execute_all_commands(intent_data: dict, groq_api_key: str) -> list:
+def execute_all_commands(intent_data: dict, groq_api_key: str, mem0_context: str = "") -> list:
     """Execute all commands from intent classification (compound command support)."""
     commands = intent_data.get("commands", [])
     if not commands:
@@ -387,7 +408,7 @@ def execute_all_commands(intent_data: dict, groq_api_key: str) -> list:
 
     results = []
     for cmd in commands:
-        result = execute_command(cmd, intent_data, groq_api_key)
+        result = execute_command(cmd, intent_data, groq_api_key, mem0_context)
         result["command_type"] = cmd.get("type", "unknown")
         results.append(result)
 

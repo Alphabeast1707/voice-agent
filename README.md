@@ -1,11 +1,12 @@
 # ⬡ Voice Agent
 
-> A voice-controlled AI agent that transcribes speech, understands intent, and executes actions — all in a local web interface.
+> A voice-controlled AI agent that transcribes speech, understands intent, remembers your preferences, and executes actions — all in a local web interface.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python)
 ![Gradio](https://img.shields.io/badge/UI-Gradio-orange?style=flat-square)
 ![Whisper](https://img.shields.io/badge/STT-Whisper_v3_(Groq)-green?style=flat-square)
 ![Llama](https://img.shields.io/badge/LLM-Llama_3.3_70B_(Groq)-purple?style=flat-square)
+![mem0](https://img.shields.io/badge/Memory-mem0-ff4081?style=flat-square)
 
 ---
 
@@ -20,6 +21,8 @@ Voice Agent converts your spoken commands into real actions on your machine:
 | *"Create a folder called experiments"* | Creates `output/experiments/` |
 | *"List all files in the output folder"* | Shows file listing |
 | *"What is recursion?"* | General chat response |
+
+**It also remembers you.** Over time, mem0 learns your coding style, language preferences, and habits — making responses more personalized.
 
 ---
 
@@ -36,6 +39,12 @@ Audio Input (mic/upload)
          │  Transcription
          ▼
 ┌───────────────────┐
+│   Memory Layer    │  ← mem0 (retrieves relevant user context)
+│  agent/memory.py  │
+└────────┬──────────┘
+         │  Context-enriched input
+         ▼
+┌───────────────────┐
 │ Intent Classifier │  ← Groq Llama 3.3 70B
 │  agent/intent.py  │
 └────────┬──────────┘
@@ -45,7 +54,7 @@ Audio Input (mic/upload)
 │  Tool Executor    │  ← Code gen, file ops, summarization
 │  agent/tools.py   │
 └────────┬──────────┘
-         │  Results
+         │  Results + store to mem0
          ▼
 ┌───────────────────┐
 │   Gradio UI       │  ← http://localhost:7860
@@ -68,19 +77,21 @@ cd voice-agent
 pip install -r requirements.txt
 ```
 
-### 2. Get API Key (free tier)
+### 2. Get API Keys
 
-| Key | Where to Get | Used For |
-|-----|-------------|----------|
-| **Groq API Key** | [console.groq.com](https://console.groq.com) — free | STT + LLM (single key for everything) |
+| Key | Where to Get | Used For | Required? |
+|-----|-------------|----------|-----------|
+| **Groq API Key** | [console.groq.com](https://console.groq.com) | STT + LLM (single key) | ✅ Yes |
+| **Mem0 API Key** | [app.mem0.ai](https://app.mem0.ai) | Persistent memory | ⬜ Optional |
 
-### 3. (Optional) Set via Environment Variable
+### 3. Set Environment Variables
 
 ```bash
 export GROQ_API_KEY="gsk_..."
+export MEM0_API_KEY="m0-..."   # Optional
 ```
 
-Or enter it directly in the UI.
+Or enter them directly in the UI.
 
 ### 4. Run
 
@@ -110,6 +121,22 @@ Multiple intents in one command are supported:
 
 ---
 
+## 🧠 Persistent Memory (mem0)
+
+Voice Agent integrates **mem0** for long-term semantic memory:
+
+- **Auto-extracts facts** from conversations (e.g., "user prefers Python", "uses functional style")
+- **Injects context** into LLM prompts for personalized responses
+- **Persists across sessions** — restart the app, your preferences are still there
+- **Memory tab** in the UI lets you view and manage stored memories
+
+### How it works:
+1. You say: *"Write a Python function using type hints"*
+2. mem0 stores: *"User prefers Python with type hints"*
+3. Next time you say *"Write a sorting function"* → it automatically uses Python with type hints
+
+---
+
 ## 🛡️ Safety Features
 
 - **Output Sandbox**: ALL file operations are restricted to the `output/` directory. Path traversal is prevented.
@@ -122,26 +149,21 @@ Multiple intents in one command are supported:
 
 ### Why Groq for STT (instead of local Whisper)?
 
-**Option A — Local Whisper** (e.g., `openai/whisper-large-v3` via HuggingFace Transformers):
-- Requires **6–10 GB VRAM** for the large-v3 model
-- ~2–5× real-time speed on a modern GPU; much slower on CPU
-- No API dependency, fully offline
+| | Local Whisper | Groq Whisper API *(chosen)* |
+|---|---|---|
+| Model | whisper-large-v3 | whisper-large-v3 (same) |
+| Speed | ~2–5× real-time (GPU) | **~10× real-time** |
+| Hardware | 6–10 GB VRAM | None required |
+| Free tier | N/A | 2,000 min/day |
 
-**Option B — Groq Whisper API** *(chosen)*:
-- Uses the same `whisper-large-v3` model, hosted by Groq
-- **~10× real-time** inference speed via Groq's LPU hardware
-- Free tier: 2,000 audio minutes/day (more than enough for development)
-- Works on any machine, no GPU required
+A local fallback (`agent/stt.py::transcribe_local`) using `whisper-base` is also provided.
 
-**Decision**: Groq was chosen to maximize accessibility and development speed. A local fallback (`agent/stt.py::transcribe_local`) using `openai/whisper-base` is also provided for offline use.
+### Why Groq Llama for LLM?
 
-### Why Groq Llama for Intent + Code Generation?
-
-- **Single API key**: Same Groq key handles both STT and LLM — zero friction setup
-- **Speed**: Groq's LPU delivers sub-second latency on 70B parameter model
-- **Structured JSON output**: Llama 3.3 70B reliably returns the exact JSON schema required for intent parsing
-- **Code quality**: Produces production-quality code with docstrings and error handling
-- **Free tier**: Generous free tier with no credit card required
+- **Single API key** handles both STT and LLM — zero friction
+- **Sub-second latency** on 70B parameter model via Groq's LPU
+- **Free tier** with no credit card
+- **Structured JSON output** for reliable intent parsing
 
 ---
 
@@ -149,23 +171,24 @@ Multiple intents in one command are supported:
 
 ```
 voice-agent/
-├── app.py                    # Main Gradio application
+├── app.py                    # Main Gradio application + Stitch theme
 ├── requirements.txt
 ├── README.md
 ├── .gitignore
+├── .env.example
 ├── agent/
 │   ├── __init__.py
 │   ├── stt.py               # Speech-to-Text (Groq Whisper)
 │   ├── intent.py            # Intent Classification (Groq Llama 3.3 70B)
 │   ├── tools.py             # Tool Execution (file ops, code gen, chat)
-│   └── memory.py            # Session history & context
+│   └── memory.py            # Session memory + mem0 persistent memory
 └── output/                  # ← ALL generated files go here
     └── .gitkeep
 ```
 
 ---
 
-## 💡 Bonus Features Implemented
+## 💡 Features
 
 | Feature | Status | Details |
 |---------|--------|---------|
@@ -173,15 +196,17 @@ voice-agent/
 | **Human-in-the-Loop** | ✅ | Confirmation required before file writes (toggleable) |
 | **Graceful Degradation** | ✅ | Handles silent audio, bad API keys, unknown intents |
 | **Session Memory** | ✅ | History tab shows all commands, statuses, files created |
+| **Persistent Memory** | ✅ | mem0 remembers preferences across sessions |
 | **Keyword Fallback** | ✅ | If LLM API fails, keyword-based intent detection kicks in |
-| **Stitch-Inspired UI** | ✅ | Dark neon theme with feature card grid and glassmorphic cards |
+| **Stitch-Inspired UI** | ✅ | Neon dark theme with feature card grid and glassmorphic cards |
 
 ---
 
 ## 🔒 Environment Variables
 
 ```bash
-GROQ_API_KEY=gsk_...    # Groq API key (STT + LLM — single key for everything)
+GROQ_API_KEY=gsk_...    # Groq API key (STT + LLM)
+MEM0_API_KEY=m0-...     # Mem0 API key (persistent memory, optional)
 ```
 
 Never commit API keys. They're in `.gitignore` and masked in the UI.

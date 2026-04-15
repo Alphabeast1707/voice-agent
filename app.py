@@ -1,6 +1,7 @@
 """
 Voice Agent — AI-powered voice command system.
 Main application entry point using Gradio.
+Integrates mem0 for persistent semantic memory.
 
 Run: python app.py
 """
@@ -14,11 +15,16 @@ from agent import (
     get_intent_display_name,
     execute_all_commands,
     SessionMemory,
+    Mem0Memory,
 )
 from agent.tools import OUTPUT_DIR, execute_list_files
 
 # --- Session State ---
 memory = SessionMemory()
+mem0 = Mem0Memory(
+    api_key=os.environ.get("MEM0_API_KEY", ""),
+    user_id="voice_agent_user",
+)
 
 # ─────────────────────────────────────────────
 # CORE PIPELINE
@@ -27,11 +33,12 @@ memory = SessionMemory()
 def run_pipeline(
     audio_input,
     groq_key: str,
+    mem0_key: str,
     require_confirmation: bool,
     pending_state: dict,
 ):
     """
-    Full pipeline: audio → STT → intent → tool execution.
+    Full pipeline: audio → STT → intent → mem0 context → tool execution → mem0 store.
     Yields progressive updates to the UI.
     """
     if not audio_input:
@@ -49,6 +56,10 @@ def run_pipeline(
             gr.update(visible=False), gr.update(visible=False)
         )
         return
+
+    # Update mem0 key if changed
+    if mem0_key.strip() and mem0_key.strip() != mem0.api_key:
+        mem0.update_key(mem0_key)
 
     # STT
     yield (
@@ -100,6 +111,13 @@ def run_pipeline(
         param_str = "\n".join([f"  • {k}: {v}" for k, v in params.items() if v])
         intent_display += f"\n\nParameters:\n{param_str}"
 
+    # Retrieve mem0 context
+    mem0_context = ""
+    if mem0.is_available:
+        mem0_context = mem0.get_context_prompt(transcription)
+        if mem0_context:
+            intent_display += "\n\n🧠 Memory context injected"
+
     # Confirmation Gate
     file_writing_intents = {"write_code", "create_file", "summarize_text"}
     needs_file_op = any(i in file_writing_intents for i in all_intents)
@@ -109,6 +127,7 @@ def run_pipeline(
             "transcription": transcription,
             "intent_data": intent_data,
             "groq_key": groq_key,
+            "mem0_context": mem0_context,
         }
         yield (
             "✅ Analysis complete. Awaiting confirmation.",
@@ -122,7 +141,7 @@ def run_pipeline(
         )
         return
 
-    # Execute
+    # Execute with mem0 context
     yield (
         "⚙️ Executing commands...",
         transcription,
@@ -132,8 +151,11 @@ def run_pipeline(
         gr.update(visible=False), gr.update(visible=False)
     )
 
-    results = execute_all_commands(intent_data, groq_key)
+    results = execute_all_commands(intent_data, groq_key, mem0_context)
     memory.add_entry(transcription, intent_data, results)
+
+    # Store in mem0
+    _store_in_mem0(transcription, results, all_intents)
 
     action_log, final_output = format_results(results)
 
@@ -160,11 +182,14 @@ def confirm_execution(pending_state: dict):
     transcription = pending_state.get("transcription", "")
     intent_data = pending_state.get("intent_data", {})
     groq_key = pending_state.get("groq_key", "")
+    mem0_context = pending_state.get("mem0_context", "")
 
-    results = execute_all_commands(intent_data, groq_key)
+    results = execute_all_commands(intent_data, groq_key, mem0_context)
     memory.add_entry(transcription, intent_data, results)
 
     all_intents = intent_data.get("intents", [])
+    _store_in_mem0(transcription, results, all_intents)
+
     intent_badges = "  ".join([get_intent_display_name(i) for i in all_intents])
     confidence = intent_data.get("confidence", 0)
     intent_display = f"{intent_badges}\n\nConfidence: {confidence:.0%}"
@@ -190,6 +215,21 @@ def cancel_execution():
         "",
         gr.update(visible=False), gr.update(visible=False)
     )
+
+
+def _store_in_mem0(transcription: str, results: list, intents: list):
+    """Store the interaction in mem0 for long-term recall."""
+    if not mem0.is_available:
+        return
+    try:
+        response = ""
+        for r in results:
+            if r.get("output"):
+                response += r["output"][:500] + "\n"
+        primary_intent = intents[0] if intents else "unknown"
+        mem0.add(transcription, response.strip(), intent=primary_intent)
+    except Exception as e:
+        print(f"[mem0] store error: {e}")
 
 
 def format_results(results: list) -> tuple:
@@ -219,11 +259,13 @@ def refresh_file_list():
 
 def get_session_stats():
     stats = memory.get_stats()
+    mem0_status = "🟢 Connected" if mem0.is_available else "⚪ Not configured"
     return (
         f"**Commands:** {stats['total_commands']}  |  "
         f"**Successful:** {stats['successful']}  |  "
         f"**Files Created:** {stats['files_created']}  |  "
-        f"**Session Time:** {stats['session_duration']}"
+        f"**Session Time:** {stats['session_duration']}  |  "
+        f"**Mem0:** {mem0_status}"
     )
 
 
@@ -234,6 +276,29 @@ def get_history_table():
 def clear_session():
     memory.clear()
     return "🗑️ Session cleared.", []
+
+
+def refresh_memories():
+    """Refresh mem0 memories display."""
+    return mem0.get_display_memories()
+
+
+def clear_memories():
+    """Clear all mem0 memories."""
+    if mem0.delete_all():
+        return "🗑️ All memories deleted.", mem0.get_display_memories()
+    return "⚠️ Failed to delete memories (mem0 may not be configured).", mem0.get_display_memories()
+
+
+def update_mem0_key(key: str):
+    """Update the mem0 API key."""
+    mem0.update_key(key)
+    if mem0.is_available:
+        return "🟢 Mem0 connected! Memories will persist across sessions."
+    elif key.strip():
+        return f"⚠️ {mem0._init_error}"
+    else:
+        return "⚪ Mem0 not configured. Enter your API key to enable persistent memory."
 
 
 # ─────────────────────────────────────────────
@@ -294,7 +359,6 @@ body {
     padding: 20px !important;
 }
 
-/* Force dark on Gradio wrappers and footer */
 .main, .wrap, .contain, main, footer,
 div[class*="footer"], .gr-form,
 #component-0, .app {
@@ -491,6 +555,20 @@ button:not(.primary-btn) {
     overflow-y: auto;
 }
 
+/* ─── Memory Panel ─── */
+.memory-panel {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-left: 3px solid var(--purple) !important;
+    border-radius: var(--radius-sm) !important;
+    padding: 16px !important;
+    font-family: var(--mono) !important;
+    font-size: 0.8rem !important;
+    white-space: pre-wrap;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
 /* ─── Stats ─── */
 .stats-bar {
     background: var(--surface) !important;
@@ -560,6 +638,17 @@ label {
     font-size: 0.9rem;
     margin: 0 6px;
 }
+
+/* ─── Mem0 status indicator ─── */
+.mem0-status {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+}
 """
 
 def create_app():
@@ -578,6 +667,8 @@ def create_app():
                 <span class="s">AUDIO</span>
                 <span class="a">→</span>
                 <span class="s">STT</span>
+                <span class="a">→</span>
+                <span class="s">MEMORY</span>
                 <span class="a">→</span>
                 <span class="s">INTENT</span>
                 <span class="a">→</span>
@@ -618,9 +709,9 @@ def create_app():
                 <div class="card-desc">Browse all generated files in the output folder with sizes and dates.</div>
             </div>
             <div class="feature-card">
-                <div class="card-icon icon-pink">⚡</div>
-                <div class="card-title">Compound Commands</div>
-                <div class="card-desc">Chain multiple actions in one voice command — "Summarize and save to file".</div>
+                <div class="card-icon icon-pink">🧠</div>
+                <div class="card-title">Persistent Memory</div>
+                <div class="card-desc">Remembers your preferences across sessions via mem0 — learns as you use it.</div>
             </div>
         </div>
         """)
@@ -633,13 +724,27 @@ def create_app():
             with gr.Column(scale=1, min_width=340):
 
                 gr.HTML('<div class="sec-label">⚡ Configuration</div>')
-                with gr.Accordion("🔑 API Key", open=True):
+                with gr.Accordion("🔑 API Keys", open=True):
                     groq_key = gr.Textbox(
                         label="Groq API Key (STT + LLM)",
                         placeholder="gsk_...",
                         type="password",
                         value=os.environ.get("GROQ_API_KEY", ""),
                         info="Single key for Whisper STT + Llama LLM — free at console.groq.com"
+                    )
+                    mem0_key = gr.Textbox(
+                        label="Mem0 API Key (Persistent Memory)",
+                        placeholder="m0-...",
+                        type="password",
+                        value=os.environ.get("MEM0_API_KEY", ""),
+                        info="Optional — enables memory across sessions. Free at app.mem0.ai"
+                    )
+                    mem0_status = gr.Textbox(
+                        value=update_mem0_key(os.environ.get("MEM0_API_KEY", "")),
+                        interactive=False,
+                        show_label=False,
+                        lines=1,
+                        elem_classes=["mem0-status"],
                     )
 
                 gr.HTML('<div class="sec-label" style="margin-top:18px">🎤 Audio Input</div>')
@@ -679,6 +784,11 @@ def create_app():
                         <br>
                         <span class="node node-cyan">Groq Whisper v3</span>
                         <span style="font-size:0.65rem;color:var(--text-dim);"> STT</span>
+                        <br>
+                        <span class="arrow">↓</span>
+                        <br>
+                        <span class="node node-purple">🧠 mem0</span>
+                        <span style="font-size:0.65rem;color:var(--text-dim);"> Context</span>
                         <br>
                         <span class="arrow">↓</span>
                         <br>
@@ -739,6 +849,32 @@ def create_app():
                             placeholder="Generated content, summaries, or responses will appear here...",
                         )
 
+                    with gr.Tab("🧠 Memory"):
+                        gr.HTML("""
+                        <div style="margin-bottom:12px;">
+                            <div class="sec-label">🧠 Persistent Memory — powered by mem0</div>
+                            <p style="font-size:0.78rem;color:var(--text-secondary);margin:0;line-height:1.5;">
+                                Mem0 automatically extracts facts and preferences from your conversations.
+                                These memories are used to personalize future responses — the agent learns
+                                your coding style, language preferences, and more over time.
+                            </p>
+                        </div>
+                        """)
+                        memory_display = gr.Markdown(
+                            value=mem0.get_display_memories(),
+                            elem_classes=["memory-panel"]
+                        )
+                        with gr.Row():
+                            refresh_mem_btn = gr.Button("🔄 Refresh Memories", size="sm")
+                            clear_mem_btn = gr.Button("🗑️ Clear All Memories", size="sm", variant="stop")
+                        mem_action_status = gr.Textbox(
+                            value="",
+                            interactive=False,
+                            show_label=False,
+                            lines=1,
+                            visible=False,
+                        )
+
                     with gr.Tab("📂 Files"):
                         with gr.Row():
                             refresh_btn = gr.Button("🔄 Refresh", size="sm")
@@ -793,7 +929,7 @@ def create_app():
 
         run_btn.click(
             fn=run_pipeline,
-            inputs=[audio_input, groq_key, require_confirm, pending_state],
+            inputs=[audio_input, groq_key, mem0_key, require_confirm, pending_state],
             outputs=pipeline_outputs,
         )
 
@@ -827,6 +963,23 @@ def create_app():
             queue=False
         )
 
+        # Mem0 key update
+        mem0_key.change(
+            fn=update_mem0_key,
+            inputs=[mem0_key],
+            outputs=[mem0_status],
+        )
+
+        # Memory tab
+        refresh_mem_btn.click(fn=refresh_memories, outputs=[memory_display])
+        clear_mem_btn.click(
+            fn=clear_memories,
+            outputs=[mem_action_status, memory_display]
+        ).then(
+            fn=lambda: gr.update(visible=True),
+            outputs=[mem_action_status]
+        )
+
         refresh_btn.click(fn=refresh_file_list, outputs=[file_list_out])
         refresh_history_btn.click(
             fn=lambda: (get_session_stats(), get_history_table()),
@@ -848,6 +1001,7 @@ if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     print("  STT: Groq Whisper (whisper-large-v3)")
     print("  LLM: Groq Llama (llama-3.3-70b-versatile)")
+    print(f"  Mem0: {'🟢 Connected' if mem0.is_available else '⚪ Not configured'}")
     print("  UI: http://localhost:7860")
     print("═" * 52 + "\n")
 
