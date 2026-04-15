@@ -220,12 +220,3 @@ Never commit API keys. They're in `.gitignore` and masked in the UI.
 | Groq `whisper-large-v3` | STT | ~0.5–2s | Excellent |
 | Local `whisper-base` | STT | ~5–15s (CPU) | Good |
 | Groq `llama-3.3-70b-versatile` | Intent + Code + Chat | ~0.5–2s | Excellent |
-
----
-
-## 🤝 Contributing
-
-1. Fork the repo
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit your changes
-4. Open a Pull Request
